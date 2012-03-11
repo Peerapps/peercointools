@@ -89,9 +89,9 @@ def main():
   keys = n_transactions.keys()
   keys.sort()
   for k in keys:
-    v = v_transactions[k]/1.0e8
-    v_min = v_transactions_min[k]/1.0e8
-    v_max = v_transactions_max[k]/1.0e8
+    v = v_transactions[k]/1.0e6
+    v_min = v_transactions_min[k]/1.0e6
+    v_max = v_transactions_max[k]/1.0e6
     # Columns are:
     # month n_transactions min max total
     # ... where min and max add up just the smallest or largest
