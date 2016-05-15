@@ -52,7 +52,7 @@ def deserialize_TxIn(d, transaction_index=None, owner_keys=None):
     result += " coinbase:"+d['scriptSig'].encode('hex_codec')
   elif transaction_index is not None and d['prevout_hash'] in transaction_index:
     p = transaction_index[d['prevout_hash']]['txOut'][d['prevout_n']]
-    result = "TxIn: value: %f"%(p['value']/1.0e8,)
+    result = "TxIn: value: %f"%(p['value']/1.0e6,)
     result += " prev("+long_hex(d['prevout_hash'][::-1])+":"+str(d['prevout_n'])+")"
   else:
     result = "TxIn: prev("+long_hex(d['prevout_hash'][::-1])+":"+str(d['prevout_n'])+")"
@@ -69,7 +69,7 @@ def parse_TxOut(vds):
   return d
 
 def deserialize_TxOut(d, owner_keys=None):
-  result =  "TxOut: value: %f"%(d['value']/1.0e8,)
+  result =  "TxOut: value: %f"%(d['value']/1.0e6,)
   pk = extract_public_key(d['scriptPubKey'])
   result += " pubkey: "+pk
   result += " Script: "+decode_script(d['scriptPubKey'])
@@ -82,6 +82,7 @@ def parse_Transaction(vds):
   d = {}
   start_pos = vds.read_cursor
   d['version'] = vds.read_int32()
+  d['nTime'] = vds.read_uint32()
   n_vin = vds.read_compact_size()
   d['txIn'] = []
   for i in xrange(n_vin):
@@ -95,7 +96,7 @@ def parse_Transaction(vds):
   return d
 
 def deserialize_Transaction(d, transaction_index=None, owner_keys=None, print_raw_tx=False):
-  result = "%d tx in, %d out\n"%(len(d['txIn']), len(d['txOut']))
+  result = "Time: "+time.ctime(d['nTime'])+", %d tx in, %d out\n"%(len(d['txIn']), len(d['txOut']))
   for txIn in d['txIn']:
     result += deserialize_TxIn(txIn, transaction_index) + "\n"
   for txOut in d['txOut']:
