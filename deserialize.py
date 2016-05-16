@@ -9,6 +9,7 @@ import logging
 import socket
 import time
 from util import short_hex, long_hex
+import struct
 
 def parse_CAddress(vds):
   d = {}
@@ -44,6 +45,7 @@ def parse_TxIn(vds):
   d['scriptSig'] = vds.read_bytes(vds.read_compact_size())
   d['sequence'] = vds.read_uint32()
   return d
+
 def deserialize_TxIn(d, transaction_index=None, owner_keys=None):
   if d['prevout_hash'] == "\x00"*32:
     result = "TxIn: COIN GENERATED"
@@ -78,6 +80,7 @@ def deserialize_TxOut(d, owner_keys=None):
 
 def parse_Transaction(vds):
   d = {}
+  start_pos = vds.read_cursor
   d['version'] = vds.read_int32()
   d['nTime'] = vds.read_uint32()
   n_vin = vds.read_compact_size()
@@ -89,13 +92,18 @@ def parse_Transaction(vds):
   for i in xrange(n_vout):
     d['txOut'].append(parse_TxOut(vds))
   d['lockTime'] = vds.read_uint32()
+  d['__data__'] = vds.input[start_pos:vds.read_cursor]
   return d
-def deserialize_Transaction(d, transaction_index=None, owner_keys=None):
+
+def deserialize_Transaction(d, transaction_index=None, owner_keys=None, print_raw_tx=False):
   result = "Time: "+time.ctime(d['nTime'])+", %d tx in, %d out\n"%(len(d['txIn']), len(d['txOut']))
   for txIn in d['txIn']:
     result += deserialize_TxIn(txIn, transaction_index) + "\n"
   for txOut in d['txOut']:
     result += deserialize_TxOut(txOut, owner_keys) + "\n"
+  if print_raw_tx == True:
+      result += "Transaction hex value: " + d['__data__'].encode('hex') + "\n"
+  
   return result
 
 def parse_MerkleTx(vds):
@@ -185,14 +193,14 @@ def parse_Block(vds):
 
   return d
   
-def deserialize_Block(d):
+def deserialize_Block(d, print_raw_tx=False):
   result = "Time: "+time.ctime(d['nTime'])+" Nonce: "+str(d['nNonce'])
   result += "\nnBits: 0x"+hex(d['nBits'])
   result += "\nhashMerkleRoot: 0x"+d['hashMerkleRoot'][::-1].encode('hex_codec')
   result += "\nPrevious block: "+d['hashPrev'][::-1].encode('hex_codec')
   result += "\n%d transactions:\n"%len(d['transactions'])
   for t in d['transactions']:
-    result += deserialize_Transaction(t)+"\n"
+    result += deserialize_Transaction(t, print_raw_tx=print_raw_tx)+"\n"
   result += "\nRaw block header: "+d['__header__'].encode('hex_codec')
   return result
 
@@ -237,14 +245,26 @@ def script_GetOp(bytes):
     if opcode <= opcodes.OP_PUSHDATA4:
       nSize = opcode
       if opcode == opcodes.OP_PUSHDATA1:
-        nSize = ord(bytes[i])
-        i += 1
+        if i + 1 > len(bytes):
+          vch = "_INVALID_NULL"
+          i = len(bytes)
+        else:
+          nSize = ord(bytes[i])
+          i += 1
       elif opcode == opcodes.OP_PUSHDATA2:
-        (nSize,) = struct.unpack_from('<H', bytes, i)
-        i += 2
+        if i + 2 > len(bytes):
+          vch = "_INVALID_NULL"
+          i = len(bytes)
+        else:
+          (nSize,) = struct.unpack_from('<H', bytes, i)
+          i += 2
       elif opcode == opcodes.OP_PUSHDATA4:
-        (nSize,) = struct.unpack_from('<I', bytes, i)
-        i += 4
+        if i + 4 > len(bytes):
+          vch = "_INVALID_NULL"
+          i = len(bytes)
+        else:
+          (nSize,) = struct.unpack_from('<I', bytes, i)
+          i += 4
       if i+nSize > len(bytes):
         vch = "_INVALID_"+bytes[i:]
         i = len(bytes)
@@ -281,27 +301,30 @@ def match_decoded(decoded, to_match):
       return False
   return True
 
-def extract_public_key(bytes):
-  decoded = [ x for x in script_GetOp(bytes) ]
+def extract_public_key(bytes, version='\x00'):
+  try:
+    decoded = [ x for x in script_GetOp(bytes) ]
+  except struct.error:
+    return "(None)"
 
   # non-generated TxIn transactions push a signature
   # (seventy-something bytes) and then their public key
   # (33 or 65 bytes) onto the stack:
   match = [ opcodes.OP_PUSHDATA4, opcodes.OP_PUSHDATA4 ]
   if match_decoded(decoded, match):
-    return public_key_to_bc_address(decoded[1][1])
+    return public_key_to_bc_address(decoded[1][1], version=version)
 
   # The Genesis Block, self-payments, and pay-by-IP-address payments look like:
   # 65 BYTES:... CHECKSIG
   match = [ opcodes.OP_PUSHDATA4, opcodes.OP_CHECKSIG ]
   if match_decoded(decoded, match):
-    return public_key_to_bc_address(decoded[0][1])
+    return public_key_to_bc_address(decoded[0][1], version=version)
 
   # Pay-by-Bitcoin-address TxOuts look like:
   # DUP HASH160 20 BYTES:... EQUALVERIFY CHECKSIG
   match = [ opcodes.OP_DUP, opcodes.OP_HASH160, opcodes.OP_PUSHDATA4, opcodes.OP_EQUALVERIFY, opcodes.OP_CHECKSIG ]
   if match_decoded(decoded, match):
-    return hash_160_to_bc_address(decoded[2][1])
+    return hash_160_to_bc_address(decoded[2][1], version=version)
 
   # BIP11 TxOuts look like one of these:
   # Note that match_decoded is dumb, so OP_1 actually matches OP_1/2/3/etc:
@@ -312,7 +335,7 @@ def extract_public_key(bytes):
   ]
   for match in multisigs:
     if match_decoded(decoded, match):
-      return "["+[ public_key_to_bc_address(decoded[i][1]) for i in range(1,len(decoded-1)) ]+"]"
+      return "["+','.join([public_key_to_bc_address(decoded[i][1]) for i in range(1,len(decoded)-1)])+"]"
 
   # BIP16 TxOuts look like:
   # HASH160 20 BYTES:... EQUAL

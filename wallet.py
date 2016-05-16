@@ -104,6 +104,8 @@ def parse_wallet(db, item_callback):
       elif type == "cscript":
         d['scriptHash'] = kds.read_bytes(20)
         d['script'] = vds.read_bytes(vds.read_compact_size())
+      elif type == "minversion":
+        d['minversion'] = vds.read_uint32()
       else:
         print "Skipping item of type "+type
         continue
